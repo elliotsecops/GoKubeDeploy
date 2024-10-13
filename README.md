@@ -1,8 +1,17 @@
 # GoKubeDeploy: A Minimalist Kubernetes Health Checker in Go
 
-GoKubeDeploy provides a production-ready, minimalist implementation of a Kubernetes health checker in Go. It features a highly efficient and reliable `healthz` endpoint that returns a JSON status report, ideal for integration with Kubernetes liveness and readiness probes.
+GoKubeDeploy provides a production-ready, minimalist implementation of a Kubernetes health checker in Go. It features a highly efficient and reliable `/healthz` endpoint that returns a JSON status report, ideal for integration with Kubernetes liveness and readiness probes.
 
 ## Key Features
+
+- **Secure by Design:**
+  - **Automated Security Scanning:** CI/CD pipeline includes Trivy for Docker image vulnerability scanning and static code analysis.
+  - **Secure Authentication and Authorization:** JWT-based authentication and authorization.
+  - **Robust Error Handling and Centralized Logging:** Improved error handling with detailed logging using Logrus and Fluent Bit for centralized log collection.
+  - **Secrets Management:** Kubernetes Secrets for managing sensitive credentials.
+  - **Network Security:** Network Policies to restrict pod-to-pod communication.
+  - **Zero-Downtime Deployments:** Readiness probes for seamless updates.
+  - **Dependency Management:** Go Modules for secure and reproducible builds.
 
 - **Minimalist Design:** The single-file Go application and concise deployment manifest minimize complexity and deployment time, ideal for microservices architectures and CI/CD pipelines.
 - **Production-Ready:** Includes robust error handling, clear logging, and a JSON-formatted health status report suitable for automated monitoring systems.
@@ -42,6 +51,12 @@ Deploy the application to your Kubernetes cluster using the provided deployment 
 
 ```bash
 kubectl apply -f kubernetes/deployment.yaml
+```
+
+Check the pod status to confirm successful deployment:
+
+```bash
+kubectl get pods
 ```
 
 ### 5. Access the Service
@@ -86,11 +101,65 @@ Example with a possible failure:
 }
 ```
 
+### JWT Example
+
+To generate a JWT for authentication, use the following Go code:
+
+```go
+import (
+    "github.com/dgrijalva/jwt-go"
+    "time"
+)
+
+var jwtKey = []byte("your_secret_key")
+
+type Claims struct {
+    Username string `json:"username"`
+    Role     string `json:"role"`
+    jwt.StandardClaims
+}
+
+func generateJWT(username, role string) (string, error) {
+    expirationTime := time.Now().Add(5 * time.Minute)
+    claims := &Claims{
+        Username: username,
+        Role:     role,
+        StandardClaims: jwt.StandardClaims{
+            ExpiresAt: expirationTime.Unix(),
+        },
+    }
+    token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+    return token.SignedString(jwtKey)
+}
+```
+
+To verify a JWT, use the following code:
+
+```go
+func verifyJWT(tokenString string) (*Claims, error) {
+    claims := &Claims{}
+    token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
+        return jwtKey, nil
+    })
+    if err != nil {
+        return nil, err
+    }
+    if !token.Valid {
+        return nil, fmt.Errorf("invalid token")
+    }
+    return claims, nil
+}
+```
+
 ## Project Structure
 
 - `healthcheck.go`: Go application source code, including the health check logic and HTTP server.
 - `Dockerfile`: Docker build instructions.
 - `kubernetes/deployment.yaml`: Kubernetes deployment configuration, including resource limits and liveness/readiness probes.
+- `kubernetes/networkpolicy.yaml`: Network policies to restrict pod-to-pod communication.
+- `kubernetes/secret.yaml`: Kubernetes Secrets for managing sensitive credentials.
+- `fluent-bit.conf`: Configuration for Fluent Bit sidecar for centralized logging.
+- `.github/workflows/ci-cd.yaml`: GitHub Actions workflow for CI/CD pipeline.
 
 ## Contributing
 
@@ -170,3 +239,30 @@ This section lists some alternative libraries and tools that offer similar funct
 
 - **Prometheus:** A popular open-source monitoring and alerting system.
 - **Grafana:** A powerful open-source platform for data visualization and analysis.
+
+## Security Considerations
+
+### Secure Coding Practices
+
+- **Input Validation:** Use libraries like `validator.v10` for robust input validation. Validate all inputs to prevent common vulnerabilities such as SQL injection and XSS.
+- **Error Handling:** Implement secure error handling practices. Log errors with sufficient detail for diagnosis but avoid logging sensitive information.
+- **Dependency Management:** Use `go mod tidy` to clean up unused dependencies and `govulncheck` to scan for vulnerabilities in dependencies.
+
+### Container Image Security
+
+- **Vulnerability Scanning:** Regularly scan Docker images using tools like Trivy to identify and remediate vulnerabilities.
+- **Minimal Base Images:** Use minimal base images (e.g., Alpine) to reduce the attack surface.
+
+### Network Security
+
+- **Network Policies:** Implement Kubernetes Network Policies to restrict communication between pods and enhance security.
+
+### Secrets Management
+
+- **Kubernetes Secrets:** Store sensitive information in Kubernetes Secrets and inject them as environment variables. Avoid hardcoding secrets in the code or configuration files.
+
+### Logging and Monitoring
+
+- **Centralized Logging:** Use Fluent Bit for centralized logging. Ensure logs are sent to a secure, centralized logging system like Elasticsearch or a cloud logging service.
+- **Monitoring:** Integrate with monitoring tools like Prometheus and Grafana for comprehensive health monitoring and alerting.
+
