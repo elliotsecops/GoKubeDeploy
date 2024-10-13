@@ -1,0 +1,105 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gokubedeploy
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: gokubedeploy
+  template:
+    metadata:
+      labels:
+        app: gokubedeploy
+    spec:
+      containers:
+        - name: gokubedeploy
+          image: elliotsecops/gokubedeploy:latest
+          ports:
+            - containerPort: 8080
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "250m"
+            limits:
+              memory: "128Mi"
+              cpu: "500m"
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          env:
+            - name: DB_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: db-credentials
+                  key: username
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: db-credentials
+                  key: password
+        - name: fluent-bit
+          image: fluent/fluent-bit:latest
+          volumeMounts:
+            - name: varlog
+              mountPath: /var/log
+            - name: fluent-bit-config
+              mountPath: /fluent-bit/etc/fluent-bit.conf
+              subPath: fluent-bit.conf
+      volumes:
+        - name: varlog
+          emptyDir: {}
+        - name: fluent-bit-config
+          configMap:
+            name: fluent-bit-config
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gokubedeploy-service
+spec:
+  selector:
+    app: gokubedeploy
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8080
+  type: LoadBalancer
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fluent-bit-config
+data:
+  fluent-bit.conf: |
+    [SERVICE]
+        Flush 1
+        Log_Level info
+
+    [INPUT]
+        Name tail
+        Path /var/log/*.log
+        Tag myapp.log
+        DB /var/log/fluent-bit.db
+        Mem_Buf_Limit 5MB
+
+    [OUTPUT]
+        Name es
+        Match *
+        Host elasticsearch
+        Port 9200
+        Index myapp
+        Type log
+        Logstash_Format On
+        Retry_Limit False
