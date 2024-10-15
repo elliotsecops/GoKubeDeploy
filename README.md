@@ -266,3 +266,78 @@ This section lists some alternative libraries and tools that offer similar funct
 - **Centralized Logging:** Use Fluent Bit for centralized logging. Ensure logs are sent to a secure, centralized logging system like Elasticsearch or a cloud logging service.
 - **Monitoring:** Integrate with monitoring tools like Prometheus and Grafana for comprehensive health monitoring and alerting.
 
+## Deployment
+
+### Secrets Management
+
+In Kubernetes, secrets are used to store sensitive information such as database credentials, OAuth client secrets, and JWT signing keys. These secrets are mounted as environment variables in the deployment to ensure they are securely managed.
+
+To create a Kubernetes secret, use the following command:
+
+```sh
+kubectl create secret generic oauth-credentials \
+  --from-literal=JWT_SECRET=<your-jwt-secret> \
+  --from-literal=GOOGLE_CLIENT_ID=<your-google-client-id> \
+  --from-literal=GOOGLE_CLIENT_SECRET=<your-google-client-secret> \
+  --from-literal=GOOGLE_REDIRECT_URL=<your-google-redirect-url>
+```
+
+### Resource Limits
+
+Setting resource limits is crucial to prevent resource exhaustion attacks and ensure that your application runs smoothly. The `deployment.yaml` file includes resource limits and requests:
+
+```yaml
+resources:
+  requests:
+    memory: "64Mi"
+    cpu: "250m"
+  limits:
+    memory: "128Mi"
+    cpu: "500m"
+```
+
+### Rolling Update Strategy
+
+The rolling update strategy is selected to minimize downtime and provide high availability. This strategy ensures that new pods are created before old ones are terminated, allowing for seamless updates without service interruptions.
+
+## Security Checklist
+
+### Input Validation
+
+- **Use a library like `validator.v10` to validate inputs against predefined rules.**
+- **Sanitize user inputs to prevent XSS attacks.**
+
+### Dependency Management
+
+- **Use `go mod tidy` to manage dependencies and clean up unused ones.**
+- **Use `govulncheck` to identify vulnerable packages.**
+
+### Container Image Security
+
+- **Regularly scan Docker images using tools like Trivy.**
+- **Use minimal base images (e.g., Alpine) to reduce the attack surface.**
+
+### Network Security
+
+- **Implement Kubernetes Network Policies to restrict pod-to-pod communication.**
+
+### Secrets Management
+
+- **Store sensitive information in Kubernetes Secrets.**
+- **Inject secrets as environment variables in the deployment.**
+
+### Logging and Monitoring
+
+- **Use Fluent Bit for centralized logging.**
+- **Integrate with monitoring tools like Prometheus and Grafana.**
+
+## GitHub Actions Workflow
+
+### Enhancements
+
+- **Add a step to check the output of the Trivy scan and fail the workflow if any HIGH or CRITICAL vulnerabilities are found.**
+- **Consider adding a more sophisticated notification system (e.g., using Slack or email notifications).**
+
+## Conclusion
+
+GoKubeDeploy is a robust, secure, and production-ready Kubernetes health checker in Go. By following the best practices outlined in this README, you can ensure that your application is secure, scalable, and easy to deploy. Contributions and feedback are welcome to further enhance the project.
