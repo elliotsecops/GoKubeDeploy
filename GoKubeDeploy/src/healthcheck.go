@@ -1,87 +1,124 @@
 package main
 
 import (
-	"encoding/json"
-	"fmt"
-	"log"
-	"net/http"
-	"os"
-	"strings"
+    "database/sql"
+    "encoding/json"
+    "net/http"
+    "os"
 
-	"github.com/dgrijalva/jwt-go"
-	"github.com/sirupsen/logrus"
+    "github.com/gin-gonic/gin"
+    "github.com/google/uuid"
+    "github.com/sirupsen/logrus"
+    "github.com/spf13/viper" // for reading config and version from file
+    _ "github.com/lib/pq"
 )
 
 type HealthStatus struct {
-	Status  string `json:"status"`
-	Message string `json:"message,omitempty"`
+    Status  string `json:"status"`
+    Message string `json:"message,omitempty"`
 }
 
-var jwtKey = []byte("your_secret_key")
-
-func authMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		tokenString := r.Header.Get("Authorization")
-		if tokenString == "" {
-			http.Error(w, "Authorization token not provided", http.StatusUnauthorized)
-			return
-		}
-
-		tokenString = strings.Replace(tokenString, "Bearer ", "", 1)
-		claims := &jwt.StandardClaims{}
-
-		token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
-			return jwtKey, nil
-		})
-
-		if err != nil {
-			http.Error(w, "Invalid token", http.StatusUnauthorized)
-			return
-		}
-
-		if !token.Valid {
-			http.Error(w, "Invalid token", http.StatusUnauthorized)
-			return
-		}
-
-		next.ServeHTTP(w, r)
-	})
+type AppError struct {
+    Message string `json:"message"`
+    Code    int    `json:"code"`
 }
 
-func healthCheckHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	// Aquí puedes agregar la lógica de comprobación de salud
-	// Por ejemplo, verificar la conexión a una base de datos o un servicio externo
-	// Si todo está bien, devuelve un código de estado 200
-	status := HealthStatus{Status: "OK"}
-
-	// Simular un fallo si la variable de entorno SIMULAR_FALLO está presente
-	if os.Getenv("SIMULAR_FALLO") != "" {
-		status = HealthStatus{Status: "ERROR", Message: "Error simulado"}
-		w.WriteHeader(http.StatusInternalServerError) // Cambiar el código de estado
-		logrus.WithError(fmt.Errorf("simulated error")).Error("Health check failed")
-	} else {
-		logrus.Info("Health check realizado")
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(status)
+func (e *AppError) Error() string {
+    return e.Message
 }
+
+var db *sql.DB
+var appVersion string
 
 func main() {
-	http.Handle("/healthz", authMiddleware(http.HandlerFunc(healthCheckHandler)))
+    viper.AutomaticEnv() // Read environment variables
+    appVersion = viper.GetString("APP_VERSION")
 
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
-	}
+    logrus.SetFormatter(&logrus.JSONFormatter{})
+    logrus.AddHook(contextHook{appVersion: appVersion})
 
-	log.Printf("Starting health check server on port %s...\n", port)
-	if err := http.ListenAndServe(":"+port, nil); err != nil {
-		log.Fatalf("Could not start server: %s\n", err)
-	}
+    var err error
+    db, err = sql.Open("postgres", os.Getenv("DATABASE_URL"))
+    if err != nil {
+        logrus.WithFields(logrus.Fields{
+            "error": err,
+            "url":   os.Getenv("DATABASE_URL"),
+        }).Fatal("Failed to open database connection")
+    }
+    defer db.Close()
+
+    r := setupRouter()
+    if err := r.Run(":8080"); err != nil {
+        logrus.WithFields(logrus.Fields{
+            "error": err,
+        }).Fatal("Could not start server")
+    }
+}
+
+// Middleware to add request IDs to the context
+func requestIDMiddleware(c *gin.Context) {
+    requestID := uuid.New().String()
+    c.Set("requestID", requestID)
+    c.Next()
+}
+
+func checkDatabaseConnection() error {
+    err := db.Ping()
+    if err != nil {
+        return &AppError{Message: "Database connection failed", Code: http.StatusInternalServerError}
+    }
+    return nil
+}
+
+func healthCheckHandler(c *gin.Context) {
+    requestID := c.MustGet("requestID").(string)
+    ctx := logrus.WithFields(logrus.Fields{"request_id": requestID})
+
+    // Check database connection
+    err := checkDatabaseConnection()
+    if err != nil {
+        ctx.WithError(err).WithField("database_url", os.Getenv("DATABASE_URL")).Error("Database check failed")
+        c.JSON(err.(*AppError).Code, gin.H{"status": "ERROR", "message": err.Error()})
+        return
+    }
+
+    // Simulate a failure if the environment variable SIMULAR_FALLO is present
+    simulatedError := os.Getenv("SIMULAR_FALLO")
+    if simulatedError != "" {
+        status := HealthStatus{Status: "ERROR", Message: simulatedError}
+        if err := c.JSON(http.StatusInternalServerError, status); err != nil {
+            ctx.WithError(err).Error("Failed to encode JSON response")
+            return
+        }
+        ctx.WithFields(logrus.Fields{"status": status.Status, "simulated_error": simulatedError}).Warn("Simulated health check failure")
+        return
+    }
+
+    status := HealthStatus{Status: "OK"}
+    if err := c.JSON(http.StatusOK, status); err != nil {
+        ctx.WithError(err).Error("Failed to encode JSON response")
+        return
+    }
+    ctx.WithField("status", status.Status).Info("Health check performed")
+}
+
+func setupRouter() *gin.Engine {
+    r := gin.Default()
+    r.Use(requestIDMiddleware)
+    r.GET("/healthz", healthCheckHandler)
+    return r
+}
+
+// contextHook is a custom Logrus hook to add context to logs
+type contextHook struct {
+    appVersion string
+}
+
+func (h contextHook) Levels() []logrus.Level {
+    return logrus.AllLevels
+}
+
+func (h contextHook) Fire(entry *logrus.Entry) error {
+    entry.Data["app_version"] = h.appVersion
+    return nil
 }
