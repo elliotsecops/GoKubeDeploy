@@ -1,16 +1,30 @@
-# Dockerfile
-FROM golang:1.16-alpine AS builder
+# Use the official Go image with Alpine as the base image
+FROM golang:1.20-alpine AS builder
 
+# Set the working directory inside the container
 WORKDIR /app
 
-COPY . /app  
+# Copy the Go module files and download dependencies
+COPY go.mod go.sum ./
+RUN go mod download
 
-RUN go build -o /healthcheck github.com/elliotsecops/GoKubeDeploy/src
+# Copy the source code into the container
+COPY . .
 
+# Build the Go application
+RUN go build -o healthcheck ./src
+
+# Use a minimal Alpine image for the final container
 FROM alpine:latest
 
+# Set the working directory inside the container
 WORKDIR /root/
 
-COPY --from=builder /healthcheck /root/ 
+# Copy the built binary from the builder stage
+COPY --from=builder /app/healthcheck /root/
 
+# Expose the port that the application will run on
+EXPOSE 8080
+
+# Command to run the application
 CMD ["./healthcheck"]
